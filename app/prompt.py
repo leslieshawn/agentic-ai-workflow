@@ -23,6 +23,7 @@ from app.const import MISSING, ToolChoice
 from app.logging_config import get_logger, setup_logging
 from app.settings import LLM_ASSISTANT_NAME, LLM_TOOL_CHOICE
 from app.stackademy import stackademy_app
+from app.synastra import synastra_app
 from app.utils import color_text, dump_json_colored
 
 setup_logging()
@@ -37,18 +38,78 @@ MessagesType = list[
     ]
 ]
 
+SYSTEM_PROMPT_CAPSTONE = """
+You are a pleasant but honest astrologer with many years of experience who provides relationship advice using 
+structured astrology compatibility data derived from Natal Charts. A tool will be provided to you to use once 
+the Birth Month, Birth Year, Birth Country, and Birth City of the User AND the Birth Month, Birth Year, 
+Birth Country, and Birth City of the user’s partner. If you are unable to provide the necessary astrological 
+natal chart calculator parameters, then ask the user for clarification. Once you have this information, you may 
+call the tool that is provided to you with those details to get the formatted compatibility report with many 
+relationship domain areas and compatibility scores. You will use this synastry compatibility report to respond 
+to follow up questions from the user. Use only the provided areas, scores, descriptions, and key factors. 
+Do not invent additional placements, houses, aspects, or chart facts.
+"""
+
+SYSTEM_PROMPT = """
+You are Synastra, a playful but practical natal/synastry relationship chatbot.
+
+You treat astrology as symbolic and personality-style context, not as scientific fact,
+certainty, fate, diagnosis, or proof.
+
+You have access to one tool: get_synastry_report.
+
+The tool requires exactly two subjects. Each subject must include:
+- optional name
+- birth_data.year
+- birth_data.month
+- birth_data.city
+- birth_data.country_code
+
+Before calling get_synastry_report, determine whether the user has provided complete
+required birth data for exactly two people.
+
+If either person is missing required details, ask a concise clarification question.
+Do not call the tool with incomplete data.
+
+Call get_synastry_report only after complete data for exactly two subjects is available.
+
+If a valid synastry report is already present in the conversation, answer using that
+report instead of calling the tool again, unless the user changes one of the birth details.
+
+Do not copy, inherit, or reuse one subject’s birth city or country for the other subject unless 
+the user explicitly says both people were born there.
+
+Location details belong only to the subject they are grammatically attached to.
+
+If one subject has month/year but no city or country, ask for that subject’s missing birth city 
+and country before calling the tool.
+
+Never guess missing birth city or country from another person’s details.
+
+After get_synastry_report returns a valid report, answer relationship questions using
+only the returned compatibility data:
+- life_area_compatibility.area
+- life_area_compatibility.compatibility_score
+- life_area_compatibility.description
+- life_area_compatibility.key_factors
+
+Do not invent chart factors, houses, placements, signs, aspects, scores,
+compatibility areas, or other astrology details.
+
+If the report does not contain information relevant to the user’s question, say so.
+You may still give practical relationship advice, but clearly separate it from what
+the report supports.
+
+For safety, health, legal, financial, or major life decisions, do not rely on astrology.
+Give practical caution.
+
+Keep responses concise, warm, and useful.
+"""
+
 messages: MessagesType = [
     ChatCompletionSystemMessageParam(
         role="system",
-        content="""You are a helpful assistant for the Stackademy online learning platform.
-            If the user wants no further assistance, respond with "Goodbye!".
-            Prioritize use of the functions available to you as needed.
-            Do not provide answers that are not based on the functions available to you.
-            Your task is to assist users with their queries related to the platform,
-            including course information, enrollment procedures, and general support.
-            You should respond in a concise and clear manner, providing accurate information based on the user's request.
-            If you ask a follow up question, then place it at the bottom of the response and precede it with "QUESTION:".
-            """,
+        content=SYSTEM_PROMPT,
         name=LLM_ASSISTANT_NAME,
     ),
     ChatCompletionAssistantMessageParam(
@@ -82,6 +143,10 @@ def handle_function_call(function_name: str, arguments: dict) -> str:
 
         # Return result as JSON string
         return json.dumps({"success": success})
+
+    if function_name == "get_synastry_report":
+        # Return as JSON string
+        return synastra_app.get_synastry_report(**arguments)
 
     return json.dumps({"error": f"Unknown function: {function_name}"})
 
@@ -133,7 +198,7 @@ def process_tool_calls(message: ChatCompletionMessage) -> list[str]:
 def completion(prompt: str) -> tuple[Optional[ChatCompletion], list[str]]:
     """LLM text completion"""
 
-    def handle_completion(tools, tool_choice) -> ChatCompletion:
+    def handle_completion(tools: list | None = None, tool_choice=None) -> ChatCompletion:
         """Handle the OpenAI chat completion call."""
         openai.api_key = settings.OPENAI_API_KEY
         model = settings.OPENAI_API_MODEL
@@ -144,14 +209,22 @@ def completion(prompt: str) -> tuple[Optional[ChatCompletion], list[str]]:
                 dump_json_colored(messages, "blue"),
                 dump_json_colored(tools, "blue"),
             )
-            response = openai.chat.completions.create(
-                model=model,
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-                temperature=settings.OPENAI_API_TEMPERATURE,
-                max_tokens=settings.OPENAI_API_MAX_TOKENS,
-            )
+
+            request_args = {
+                "model": model,
+                "messages": messages,
+                "temperature": settings.OPENAI_API_TEMPERATURE,
+                "max_tokens": settings.OPENAI_API_MAX_TOKENS,
+            }
+
+            if tools:
+                request_args["tools"] = tools
+
+                if tool_choice is not None:
+                    request_args["tool_choice"] = tool_choice
+
+            response = openai.chat.completions.create(**request_args)
+
             logger.debug("OpenAI response: %s", dump_json_colored(response.model_dump(), "green"))
             return response
         except openai.RateLimitError as e:
@@ -181,10 +254,12 @@ def completion(prompt: str) -> tuple[Optional[ChatCompletion], list[str]]:
     messages.append(ChatCompletionUserMessageParam(role="user", content=prompt))
     functions_called = []
 
+    available_tools = synastra_app.available_tools(messages)
+
     response = handle_completion(
         # tool_choice={"type": "function", "function": {"name": "get_courses"}},
         tool_choice=LLM_TOOL_CHOICE,
-        tools=[stackademy_app.tool_factory_get_courses()],
+        tools=available_tools
     )
     logger.debug("Initial response: %s", dump_json_colored(response.model_dump(), "green"))
 
@@ -194,10 +269,15 @@ def completion(prompt: str) -> tuple[Optional[ChatCompletion], list[str]]:
             break
         functions_called = process_tool_calls(message)
 
+        available_tools = synastra_app.available_tools(messages)
+
+        logger.debug("Available tools count: %s", len(available_tools))
+
         response = handle_completion(
-            tools=[stackademy_app.tool_factory_get_courses(), stackademy_app.tool_factory_register()],
+            tools=available_tools,
             tool_choice=ToolChoice.AUTO,
         )
+
         message = response.choices[0].message
         logger.debug("Updated response: %s", dump_json_colored(response.model_dump(), "green"))
 

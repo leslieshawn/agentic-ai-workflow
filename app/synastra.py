@@ -33,6 +33,29 @@ class GetSynastryReportParams(BaseModel):
     subject_b: SynastrySubject
 
 class Synastra:
+    def has_valid_synastry_report(self, messages: list[dict]) -> bool:
+        for message in messages:
+            if message.get("role") != "tool":
+                continue
+
+            content = message.get("content", "")
+
+            try:
+                parsed_content = json.loads(content)
+            except json.JSONDecodeError:
+                continue
+
+            data = parsed_content.get("data", {})
+
+            if (
+                parsed_content.get("ok") is True
+                and isinstance(data, dict)
+                and "life_area_compatibility" in data
+            ):
+                return True
+
+        return False
+
     def tool_factory_get_synastry_report(self) -> ChatCompletionFunctionToolParam:
         schema = GetSynastryReportParams.model_json_schema()
 
@@ -48,6 +71,12 @@ class Synastra:
                 "parameters": schema,
             },
         )
+
+    def available_tools(self, messages: list[dict]) -> list[ChatCompletionFunctionToolParam]:
+        if self.has_valid_synastry_report(messages):
+            return []
+
+        return [self.tool_factory_get_synastry_report()]
 
     def get_synastry_report(self, subject_a: dict, subject_b: dict) -> str:
         try:

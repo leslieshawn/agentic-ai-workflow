@@ -15,11 +15,11 @@ logger = get_logger(__name__)
 def main(prompts: Optional[Tuple[str, ...]] = None) -> None:
     """Main function to demonstrate user registration."""
     print("=" * 50)
-    print("Stackademy User Registration Demo")
+    print("Synastra Terminal Chat Prototype")
     print("=" * 50)
 
     i = 0
-    user_prompt = prompts[i] if prompts else input("Welcome to Stackademy! How can I assist you today? ")
+    user_prompt = prompts[i] if prompts else input("Welcome! I am Synastra the Natal Chart Chatbot, and I use the latest in astrological technology to help you with your relationship by analysing the sky! To start talking with me, I will need to create and prepare your natal star charts. Please provide the birth month, birth year, and the city and country each of you were born in. Once this is complete we can begin the session.\n")
 
     response, functions_called = completion(prompt=user_prompt)
     while response and response.choices[0].message.content != "Goodbye!":
@@ -57,7 +57,7 @@ def main(prompts: Optional[Tuple[str, ...]] = None) -> None:
             "that's all",
             "nothing else",
         ]:
-            print("Thank you for using Stackademy! Goodbye!")
+            print("Thank you for using Synastra! Goodbye!")
             break
 
         response, functions_called = completion(prompt=user_prompt)
