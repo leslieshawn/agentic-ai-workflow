@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Prompt engineering and management for Stackademy.
+Prompt engineering and management for Synastra.
 Handles function calling and response parsing.
 """
 
@@ -114,7 +114,7 @@ messages: MessagesType = [
     ),
     ChatCompletionAssistantMessageParam(
         role="assistant",
-        content="How can I assist you with Stackademy today?",
+        content="Welcome to Synastra. Share two birth summaries, or ask a relationship question.",
         name=LLM_ASSISTANT_NAME,
     ),
 ]

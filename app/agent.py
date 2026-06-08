@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-User registration and management for Stackademy.
+User registration and management for Synastra.
 """
 
 from typing import Optional, Tuple
